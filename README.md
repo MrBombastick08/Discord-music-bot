@@ -6,7 +6,8 @@
 
 1. Python версии 3.8 или выше — [Загрузить Python](https://www.python.org/downloads/)
 2. [FFmpeg](https://ffmpeg.org/download.html) — для работы с аудио в реальном времени
-3. Python-библиотеки:
+3. ОБЯЗАТЕЛЬНО установить виртуальную среду (.venv)
+4. Python-библиотеки:
    - disnake
    - yt-dlp
 
