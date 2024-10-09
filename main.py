@@ -2,7 +2,7 @@ import disnake
 from disnake.ext import commands
 import yt_dlp
 
-TOKEN = "MTI5MDE2MDAyNjg1Nzc3MTAzOA.GbEH1L.a9P726i0h7-mkGeZEigajPBO5yrbOQyjzWM5EY"
+TOKEN = "ВАШ_ТОКЕН"
 
 intents = disnake.Intents.default()
 intents.message_content = True
