@@ -1,59 +1,58 @@
 import disnake
 from disnake.ext import commands
 import yt_dlp
+import asyncio
 
-TOKEN = "ВАШ_ТОКЕН"
+# Твой токен
+TOKEN = "YOUR_TOKEN"
 
+# Настройки для бота
 intents = disnake.Intents.default()
 intents.message_content = True
-
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Функция для скачивания аудио с YouTube
-async def from_url(url: str):
+# Подключение к голосовому каналу и воспроизведение музыки
+@bot.slash_command(description="Проиграть музыку с YouTube")
+async def play(inter, url: str):
+    channel = inter.author.voice.channel
+    if not channel:
+        await inter.response.send_message("Вы должны быть в голосовом канале!")
+        return
+
+    voice_client = disnake.utils.get(bot.voice_clients, guild=inter.guild)
+
+    if not voice_client:
+        voice_client = await channel.connect()
+
+    # Отправляем сообщение, что начали загрузку
+    await inter.response.defer()
+
+    # Настройки для yt_dlp (без сохранения файлов)
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'noplaylist': True,
-        'extract_flat': 'in_playlist',
+        'format': 'bestaudio',
+        'noplaylist': 'True',
         'quiet': True,
-        'no_warnings': True,
-        'source_address': '0.0.0.0',
-        'skip_download': True,  # Не скачивать, а передавать поток
+        'extract_flat': 'in_playlist',
+        'outtmpl': 'audio',  # Не сохраняем файл, используем напрямую для стриминга
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+        }]
     }
-    
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
-        formats = info.get('formats', [info])
-        for f in formats:
-            if f.get('vcodec') == 'none':  # Только аудио
-                return f['url']
+        url2 = info['url']
 
-# Команда /play для воспроизведения аудио
-@bot.slash_command()
-async def play(inter, url: str):
-    # Присоединение к голосовому каналу
-    if not inter.author.voice:
-        await inter.response.send_message("Ты должен быть в голосовом канале!")
-        return
-    channel = inter.author.voice.channel
-    if not inter.guild.voice_client:
-        vc = await channel.connect()
-    else:
-        vc = inter.guild.voice_client
-    
-    # Воспроизведение
-    try:
-        audio_url = await from_url(url)
-        vc.play(disnake.FFmpegPCMAudio(audio_url))
-        await inter.send(f"Играю: {url}")
-    except Exception as e:
-        await inter.send(f"Ошибка: {str(e)}")
+    ffmpeg_options = {
+        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+        'options': '-vn'
+    }
 
-# Команда /stop для остановки воспроизведения
-@bot.slash_command()
-async def stop(inter):
-    if inter.guild.voice_client:
-        await inter.guild.voice_client.disconnect()
-        await inter.send("Музыка остановлена и бот отключён.")
+    voice_client.play(disnake.FFmpegPCMAudio(url2, **ffmpeg_options), after=lambda e: print('Завершено воспроизведение'))
 
+    # Уведомляем пользователя, что трек играет
+    await inter.edit_original_message(content=f"Играет: {info['title']}")
+
+# Запуск бота
 bot.run(TOKEN)
