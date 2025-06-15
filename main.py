@@ -53,11 +53,15 @@ def get_audio_stream(url):
         'quiet': True,
         'no_warnings': True,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        if 'entries' in info:
-            return info['entries'][0]['url']
-        return info['url']
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if 'entries' in info:
+                return info['entries'][0]['url']
+            return info['url']
+    except Exception as e:
+        print(f"❌ yt-dlp error: {e}")
+        return None
 
 def get_playlist_items(url, limit=10):
     ydl_opts = {
@@ -100,6 +104,7 @@ async def search_youtube(query: str):
 @bot.event
 async def on_ready():
     print(f"✅ Бот {bot.user} запущен и готов к работе!")
+    await bot.sync_application_commands()
 
 @bot.slash_command(description="🎵 Воспроизвести музыку или плейлист с YouTube")
 async def start(inter: disnake.ApplicationCommandInteraction, query: str):
@@ -113,32 +118,25 @@ async def start(inter: disnake.ApplicationCommandInteraction, query: str):
     guild_id = inter.guild.id
     music_player = get_player(guild_id)
 
-    if not inter.guild.voice_client:
-        vc = await channel.connect()
-    else:
-        vc = inter.guild.voice_client
+    vc = inter.guild.voice_client or await channel.connect()
 
-    # Плейлист или одиночное видео
     if "list=" in query:
-        await inter.channel.send("📂 Обнаружен плейлист. Загружаю до 10 треков...")
-
+        await inter.channel.send("📂 Обнаружен плейлист. Загружаю...")
         try:
             tracks = get_playlist_items(query)
             if not tracks:
                 await inter.channel.send("❌ Не удалось загрузить плейлист.")
                 return
-
             for t in tracks:
                 music_player.add_to_queue(t)
-
-            await inter.channel.send(f"✅ Добавлено {len(tracks)} треков из плейлиста.")
+            await inter.channel.send(f"✅ Добавлено {len(tracks)} треков.")
         except Exception as e:
-            await inter.channel.send(f"❌ Ошибка при загрузке плейлиста: {e}")
+            await inter.channel.send(f"❌ Ошибка: {e}")
             return
     else:
         track = await search_youtube(query)
         if not track:
-            await inter.channel.send("❌ Не удалось найти видео.")
+            await inter.channel.send("❌ Видео не найдено.")
             return
         music_player.add_to_queue(track)
         await inter.channel.send(f"✅ Добавлено: `{track['title']}`")
@@ -147,7 +145,11 @@ async def start(inter: disnake.ApplicationCommandInteraction, query: str):
         next_track = music_player.get_next_track()
         if next_track:
             stream_url = get_audio_stream(next_track['url'])
-            vc.play(disnake.FFmpegPCMAudio(stream_url), after=lambda e: asyncio.run_coroutine_threadsafe(play_next(vc, inter.guild.id), bot.loop))
+            if not stream_url:
+                await inter.channel.send(f"❌ Не удалось получить ссылку для `{next_track['title']}`")
+                music_player.is_playing = False
+                return
+            vc.play(disnake.FFmpegPCMAudio(stream_url), after=lambda e: asyncio.run_coroutine_threadsafe(play_next(vc, guild_id), bot.loop))
             music_player.is_playing = True
             await inter.channel.send(f"🎶 Сейчас играет: `{next_track['title']}`")
 
@@ -160,19 +162,23 @@ async def play_next(vc, guild_id):
     next_track = music_player.get_next_track()
     if next_track:
         stream_url = get_audio_stream(next_track['url'])
+        if not stream_url:
+            print(f"❌ Failed to extract stream: {next_track['title']}")
+            music_player.is_playing = False
+            return
         vc.play(disnake.FFmpegPCMAudio(stream_url), after=lambda e: asyncio.run_coroutine_threadsafe(play_next(vc, guild_id), bot.loop))
     else:
         music_player.is_playing = False
         await vc.disconnect()
 
-@bot.slash_command(description="⏭ Пропустить текущий трек")
+@bot.slash_command(description="⏭ Пропустить трек")
 async def skip(inter: disnake.ApplicationCommandInteraction):
     await inter.response.defer()
     vc = inter.guild.voice_client
     if not vc or not vc.is_playing():
-        await inter.followup.send("🚫 Сейчас ничего не воспроизводится.")
+        await inter.followup.send("🚫 Ничего не играет.")
         return
-    await inter.followup.send("⏭ Пропускаю трек...")
+    await inter.followup.send("⏭ Пропускаю...")
     vc.stop()
 
 @bot.slash_command(description="⏸ Пауза")
@@ -180,34 +186,33 @@ async def pause(inter: disnake.ApplicationCommandInteraction):
     await inter.response.defer()
     vc = inter.guild.voice_client
     if not vc or not vc.is_playing():
-        await inter.followup.send("🚫 Нечего приостанавливать.")
+        await inter.followup.send("🚫 Нечего паузить.")
         return
     vc.pause()
-    await inter.followup.send("⏸ Музыка приостановлена.")
+    await inter.followup.send("⏸ Пауза.")
 
 @bot.slash_command(description="▶️ Возобновить")
 async def resume(inter: disnake.ApplicationCommandInteraction):
     await inter.response.defer()
     vc = inter.guild.voice_client
     if not vc or not vc.is_paused():
-        await inter.followup.send("🚫 Музыка не на паузе.")
+        await inter.followup.send("🚫 Не на паузе.")
         return
     vc.resume()
-    await inter.followup.send("▶️ Воспроизведение продолжено.")
+    await inter.followup.send("▶️ Продолжаем.")
 
-@bot.slash_command(description="🛑 Остановить и отключиться")
+@bot.slash_command(description="🛑 Остановить и выйти")
 async def stop(inter: disnake.ApplicationCommandInteraction):
     await inter.response.defer()
-    if not inter.guild.voice_client:
-        await inter.followup.send("❗ Бот не в голосовом канале.")
+    vc = inter.guild.voice_client
+    if not vc:
+        await inter.followup.send("❗ Бот не в канале.")
         return
-    player = inter.guild.voice_client
-    music_player = get_player(inter.guild.id)
-    await player.disconnect()
-    music_player.clear_queue()
-    await inter.followup.send("🛑 Воспроизведение остановлено и очередь очищена.")
+    await vc.disconnect()
+    get_player(inter.guild.id).clear_queue()
+    await inter.followup.send("🛑 Остановка и очистка очереди.")
 
-@bot.slash_command(description="📜 Показать очередь")
+@bot.slash_command(description="📜 Очередь")
 async def queue(inter: disnake.ApplicationCommandInteraction):
     await inter.response.defer()
     music_player = get_player(inter.guild.id)
